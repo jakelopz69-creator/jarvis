@@ -116,6 +116,30 @@ test('updates are parsed from structured output or text, and unknown topics drop
   assert.match(checkPrompt(m), /always report it/)
 })
 
+test('updates labelled by name, "id x", or as a JSON string still reach their topic', () => {
+  const m = loadMemory(tmpFile())
+  const a = addTopic(m, 'Lakers trade news').id
+  const b = addTopic(m, 'Tech news').id
+  const got = parseUpdates(
+    {
+      structured_output: JSON.stringify({
+        updates: [
+          { topicId: `id ${a}`, headline: 'Big trade', summary: 'S', important: false },
+          { topicId: 'Tech news', headline: 'New chip', summary: 'S', important: false },
+          { topicId: 'something else entirely', headline: 'Lost', summary: 'S', important: false },
+        ],
+      }),
+    },
+    m,
+  )
+  assert.deepEqual(got.map((u) => u.topicId), [a, b])
+
+  const one = loadMemory(tmpFile())
+  const only = addTopic(one, 'Mars mission').id
+  const solo = parseUpdates({ result: '[{"topicId":"mars","headline":"Launch moved","summary":"May."}]' }, one)
+  assert.equal(solo[0].topicId, only, 'with one topic, any update means that topic')
+})
+
 test('a check-in records what it found and sends it', async () => {
   const file = tmpFile()
   const m = loadMemory(file)

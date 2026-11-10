@@ -82,30 +82,59 @@ Rules:
 Answer with JSON matching the schema: {"updates": [...]}.`
 }
 
-/** Pull updates out of a result message, from structured output or text. */
-export function parseUpdates(msg, mem) {
-  let data = msg?.structured_output
-  if (!data && typeof msg?.result === 'string') {
-    const m = msg.result.match(/\{[\s\S]*\}/)
-    if (m) {
-      try {
-        data = JSON.parse(m[0])
-      } catch {
-        data = null
-      }
+/** The raw update list from a result message: structured output, or JSON in the text. */
+export function rawUpdates(msg) {
+  const parse = (text) => {
+    const m = String(text).match(/[[{][\s\S]*[\]}]/)
+    if (!m) return null
+    try {
+      return JSON.parse(m[0])
+    } catch {
+      return null
     }
   }
-  const list = Array.isArray(data?.updates) ? data.updates : []
-  const byId = new Map(mem.topics.map((t) => [t.id, t]))
-  return list
-    .filter((u) => u && byId.has(String(u.topicId)) && String(u.headline ?? '').trim())
-    .map((u) => ({
-      topicId: String(u.topicId),
-      topic: byId.get(String(u.topicId)).topic,
-      headline: String(u.headline).trim().slice(0, 160),
+  let data = msg?.structured_output
+  if (typeof data === 'string') data = parse(data)
+  if (!data && typeof msg?.result === 'string') data = parse(msg.result)
+  if (Array.isArray(data)) return data
+  return Array.isArray(data?.updates) ? data.updates : []
+}
+
+/**
+ * Match an update to a followed topic. The model is asked for the bare id, but
+ * an answer is still kept when it wrote "id ab12cd34", the topic's name, or
+ * there is only one topic to mean — a real update dropped over its label is
+ * worse than useless, because the user is told nothing happened.
+ */
+function topicFor(u, topics) {
+  const raw = String(u?.topicId ?? u?.id ?? u?.topic ?? '').trim()
+  const key = raw.toLowerCase().replace(/^id[\s:#-]*/, '').trim()
+  return (
+    topics.find((t) => t.id.toLowerCase() === key) ??
+    topics.find((t) => t.topic.toLowerCase() === raw.toLowerCase()) ??
+    topics.find((t) => key && key.length >= 4 && (raw.toLowerCase().includes(t.id.toLowerCase()) || t.topic.toLowerCase().includes(raw.toLowerCase()))) ??
+    (topics.length === 1 ? topics[0] : undefined)
+  )
+}
+
+/** Pull updates out of a result message and attach each to its topic. */
+export function parseUpdates(msg, mem) {
+  const seen = new Set()
+  const out = []
+  for (const u of rawUpdates(msg)) {
+    const headline = String(u?.headline ?? u?.title ?? '').trim()
+    const t = headline && topicFor(u, mem.topics)
+    if (!t || seen.has(t.id)) continue
+    seen.add(t.id)
+    out.push({
+      topicId: t.id,
+      topic: t.topic,
+      headline: headline.slice(0, 160),
       summary: String(u.summary ?? '').trim().slice(0, 800),
       important: u.important === true,
-    }))
+    })
+  }
+  return out
 }
 
 /** Only the two read tools, and WebFetch held to the same address rules as the bridge. */
@@ -191,6 +220,13 @@ async function doCheckIn({
   }
 
   const updates = parseUpdates(result, mem)
+  const offered = rawUpdates(result).length
+  if (offered > updates.length) {
+    log(`[jarvis] check-in: ${offered - updates.length} update(s) could not be matched to a topic and were dropped`)
+  }
+  if (process.env.JARVIS_DEBUG === '1') {
+    log(`[jarvis] check-in raw answer: ${JSON.stringify(result.structured_output ?? result.result ?? null).slice(0, 2000)}`)
+  }
 
   // Re-read before writing: the user may have followed or dropped a topic in
   // conversation while the research ran, and that change must survive.
