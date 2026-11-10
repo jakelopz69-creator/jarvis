@@ -92,6 +92,7 @@ test('schedule times parse and each slot runs once a day, with a catch-up window
 test('updates are parsed from structured output or text, and unknown topics dropped', () => {
   const m = loadMemory(tmpFile())
   const { id } = addTopic(m, 'Mars mission')
+  addTopic(m, 'Rain forecast')
   const structured = parseUpdates(
     {
       structured_output: {
@@ -140,6 +141,14 @@ test('updates labelled by name, "id x", or as a JSON string still reach their to
   assert.equal(solo[0].topicId, only, 'with one topic, any update means that topic')
 })
 
+test('several stories on one topic are kept, up to a cap', () => {
+  const m = loadMemory(tmpFile())
+  const id = addTopic(m, 'AI industry news').id
+  const many = Array.from({ length: 5 }, (_, i) => ({ topicId: id, headline: `Story ${i}`, summary: 'S', important: false }))
+  const got = parseUpdates({ structured_output: { updates: many } }, m)
+  assert.deepEqual(got.map((u) => u.headline), ['Story 0', 'Story 1', 'Story 2'])
+})
+
 test('a check-in records what it found and sends it', async () => {
   const file = tmpFile()
   const m = loadMemory(file)
@@ -178,6 +187,9 @@ test('a check-in records what it found and sends it', async () => {
   assert.ok(after.topics.every((t) => t.lastCheckedAt))
   assert.match(after.topics.find((t) => t.id === id).lastDigest, /Launch moved/)
 
+  const report = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: 'StructuredOutput', tool_input: {} })
+  assert.deepEqual(report, {}, 'the report tool itself must not be blocked')
+  assert.equal((await options.canUseTool('StructuredOutput')).behavior, 'allow')
   const deny = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: 'Bash', tool_input: {} })
   assert.equal(deny.hookSpecificOutput.permissionDecision, 'deny')
   const lan = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: 'WebFetch', tool_input: { url: 'http://192.168.1.1/' } })

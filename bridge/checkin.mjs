@@ -23,6 +23,17 @@ import { channels, sendDigest } from './notify.mjs'
 
 const CHECK_TOOLS = ['WebSearch', 'WebFetch']
 
+/**
+ * What the policy lets through: the two read tools, plus StructuredOutput —
+ * the SDK's own tool for handing back the JSON report when outputFormat is
+ * set. It touches nothing outside the session, and blocking it makes the
+ * model retry the report over and over before falling back to plain text.
+ */
+const ALLOWED_TOOLS = [...CHECK_TOOLS, 'StructuredOutput']
+
+/** A busy topic can have several stories in one check-in; past this many it is a feed, not an update. */
+const MAX_PER_TOPIC = 3
+
 const SCHEMA = {
   type: 'object',
   properties: {
@@ -119,13 +130,13 @@ function topicFor(u, topics) {
 
 /** Pull updates out of a result message and attach each to its topic. */
 export function parseUpdates(msg, mem) {
-  const seen = new Set()
+  const perTopic = new Map()
   const out = []
   for (const u of rawUpdates(msg)) {
     const headline = String(u?.headline ?? u?.title ?? '').trim()
     const t = headline && topicFor(u, mem.topics)
-    if (!t || seen.has(t.id)) continue
-    seen.add(t.id)
+    if (!t || (perTopic.get(t.id) ?? 0) >= MAX_PER_TOPIC) continue
+    perTopic.set(t.id, (perTopic.get(t.id) ?? 0) + 1)
     out.push({
       topicId: t.id,
       topic: t.topic,
@@ -140,7 +151,7 @@ export function parseUpdates(msg, mem) {
 /** Only the two read tools, and WebFetch held to the same address rules as the bridge. */
 const enforceCheckPolicy = async (input) => {
   let reason = null
-  if (!CHECK_TOOLS.includes(input.tool_name)) reason = 'Blocked: the check-in may only search and read the web.'
+  if (!ALLOWED_TOOLS.includes(input.tool_name)) reason = 'Blocked: the check-in may only search and read the web.'
   if (!reason && input.tool_name === 'WebFetch') {
     try {
       vetTarget(input.tool_input?.url)
@@ -197,7 +208,7 @@ async function doCheckIn({
       settingSources: [],
       hooks: { PreToolUse: [{ hooks: [enforceCheckPolicy] }] },
       canUseTool: async (name) =>
-        CHECK_TOOLS.includes(name)
+        ALLOWED_TOOLS.includes(name)
           ? { behavior: 'allow' }
           : { behavior: 'deny', message: 'The check-in may only search and read the web.' },
       permissionMode: 'default',
@@ -236,8 +247,10 @@ async function doCheckIn({
   for (const t of fresh.topics) {
     if (!checkedIds.has(t.id)) continue
     t.lastCheckedAt = stamp
-    const u = updates.find((x) => x.topicId === t.id)
-    if (u) t.lastDigest = `${u.headline} — ${u.summary}`.slice(0, LIMITS.digestChars)
+    const mine = updates.filter((x) => x.topicId === t.id)
+    if (mine.length) {
+      t.lastDigest = mine.map((u) => `${u.headline} — ${u.summary}`).join(' | ').slice(0, LIMITS.digestChars)
+    }
   }
   saveMemory(fresh, file)
 
