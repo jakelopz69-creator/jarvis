@@ -112,6 +112,8 @@ test('updates are parsed from structured output or text, and unknown topics drop
   assert.equal(text[0].important, false, 'only a real boolean true counts as important')
   assert.deepEqual(parseUpdates({ result: 'no json here' }, m), [])
   assert.match(checkPrompt(m), /untrusted material/)
+  assert.match(checkPrompt(m), /last update you sent: none yet/)
+  assert.match(checkPrompt(m), /always report it/)
 })
 
 test('a check-in records what it found and sends it', async () => {
