@@ -108,9 +108,11 @@ WebSocket (plus a few HTTP endpoints) on `ws://localhost:8787`.
 rest. The bridge can. And because it is the Agent SDK, it authenticates off your
 existing Claude Code login: no API key, billed to that same Claude account.
 
-**The model.** `claude-opus-5` at effort `medium` by default. Override with the
-`JARVIS_MODEL` and `JARVIS_EFFORT` environment variables. On startup the bridge
-prints its choice, e.g. `[jarvis] model claude-opus-5 · effort medium`.
+**The model.** `claude-opus-5-5` (Claude Opus 5.5) at effort `high` by default.
+Override with the `JARVIS_MODEL` and `JARVIS_EFFORT` environment variables —
+`claude-sonnet-5-5` answers faster, and `claude-fable-5-2` is the most capable
+model if your plan includes it. On startup the bridge prints its choice, e.g.
+`[jarvis] model claude-opus-5-5 · effort high`.
 
 ### The voice pipeline
 
@@ -269,8 +271,8 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_BRIDGE_PORT` | `8787` | Port for the WebSocket + HTTP endpoints |
 | `JARVIS_BRIDGE_HOST` | `127.0.0.1` | Interface to listen on. Any other address puts the agent on your network |
 | `JARVIS_ALLOWED_HOSTS` | none | Extra hostnames the bridge answers to; a request for any other name gets a 403 |
-| `JARVIS_MODEL` | `claude-opus-5` | Model to run |
-| `JARVIS_EFFORT` | `medium` | Reasoning effort |
+| `JARVIS_MODEL` | `claude-opus-5-5` | Model to run |
+| `JARVIS_EFFORT` | `high` | Reasoning effort |
 | `JARVIS_ALLOW_WRITES` | off | `1` allows effectful tools (see below) |
 | `JARVIS_MCP_SERVERS` | all configured | Comma-separated `~/.claude.json` servers to pass on; empty passes none |
 | `JARVIS_ACCOUNT_CONNECTORS` | off | `1` lets your claude.ai account's connectors join the session |

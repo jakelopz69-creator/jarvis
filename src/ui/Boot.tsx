@@ -1,70 +1,137 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../store'
+import { bootPositionMs } from '../lib/music'
+import {
+  DEFAULT_CUES,
+  analyseBootTrack,
+  levelAt,
+  markBootDone,
+  type BootCues,
+  type BootTrack,
+} from '../lib/bootCues'
+import { KOKORO_VOICE, TTS_ENGINE } from '../config'
 
 /**
  * The start-up sequence, rebuilt to the Iron Man boot it is quoting.
  *
  * Four beats, in order, cyan on black:
- *   1. an angular status bar — "INITIATING SYSTEM" — over a scrolling boot log,
- *      with a segmented bar filling left to right;
- *   2. concentric reticle rings assembling inward until "J.A.R.V.I.S" resolves
- *      at the centre;
+ *   1. an angular status bar — "INITIATING SYSTEM" — over a scrolling boot log
+ *      of real readings from this machine, with a segmented bar filling;
+ *   2. concentric reticle rings assembling inward until "J.A.R.V.I.S" resolves;
  *   3. the suit schematic — a wireframe figure with component call-outs;
  *   4. the triangular arc reactor lighting from a dim outline to full glow,
  *      which is the hand-off into the live scene behind it.
  *
- * It is one full-frame overlay driven by a small stage clock rather than four
- * components, so the timing is legible in one place. Everything is SVG and CSS
- * — no images to load, nothing that can arrive late and stall the first beat.
+ * Timed to the boot music, not to a stopwatch: bootCues.ts finds the track's
+ * hits and each beat lands on one, with a flash and a jolt, and the clock
+ * follows the music's own playback position so a late or buffering track
+ * drags the visuals with it. Everything glows with the music's loudness.
+ * Click or Enter skips it.
  */
 
-/** The stage boundaries, in milliseconds from power-on. `done` is when the
- *  overlay dissolves; App owns the actual hand-off, this is only for pacing. */
-const T = { rings: 2600, suit: 5200, reactor: 7200 }
-
-const LOG = [
-  'MOUNT F:/BACKUP/GHOST (HIDDEN)',
-  'EXTEND SYSTEM MEMORY .......... OK',
-  'TELEMETRY / COMP CLIMATION',
-  'REMOVE SYSTEM CONFIGURATION',
-  'CHECKSUM ...................... OK',
-  'RUN SYSTEM TOOL',
-]
-
 type Stage = 'bar' | 'rings' | 'suit' | 'reactor'
+
+const pad = (label: string, value: string) => `${label} ${'.'.repeat(Math.max(2, 20 - label.length))} ${value}`
+
+/** Honest readings, gathered once at power-on. Nothing here is invented. */
+function readings(): string[] {
+  const nav = navigator as Navigator & { deviceMemory?: number; gpu?: unknown }
+  const lines = [
+    pad('CORE PROCESSORS', `${nav.hardwareConcurrency || '?'} ONLINE`),
+    nav.deviceMemory ? pad('SYSTEM MEMORY', `${nav.deviceMemory} GB`) : pad('SYSTEM MEMORY', 'OK'),
+    pad('GRAPHICS', nav.gpu ? 'WEBGPU ONLINE' : 'WEBGL ONLINE'),
+    pad('DISPLAY', `${screen.width}×${screen.height}`),
+    pad('VOICE', TTS_ENGINE === 'kokoro' ? `NEURAL / ${KOKORO_VOICE.replace(/^bm_/, '').toUpperCase()}` : 'SYSTEM'),
+    pad('UPLINK', 'LOCAL BRIDGE'),
+    pad('LOCAL TIME', new Date().toLocaleTimeString([], { hour12: false })),
+    pad('MEMORY CORE', 'MOUNTED'),
+    pad('ALL SYSTEMS', 'NOMINAL'),
+  ]
+  return lines
+}
 
 export function Boot() {
   const phase = useStore((s) => s.phase)
   const reduced = useReducedMotion()
   const [t, setT] = useState(0)
+  const [track, setTrack] = useState<BootTrack | null>(null)
+  const [skipped, setSkipped] = useState(false)
+  const log = useMemo(() => (phase === 'boot' ? readings() : []), [phase])
+  const finished = useRef(false)
+  const level = useRef(0)
 
-  // A single clock: elapsed milliseconds since the boot phase began. Every
-  // stage reads from it, so nothing can drift out of step with anything else.
+  // Decode the music once, as early as possible: it is a local file, and the
+  // cues it yields have to exist before the first one is due.
+  useEffect(() => {
+    void analyseBootTrack().then(setTrack)
+  }, [])
+
+  const cues: BootCues = track?.cues ?? DEFAULT_CUES
+
+  // One clock for every beat. While the boot music is audibly playing it IS
+  // the clock; when it is not (missing, blocked, finished early) wall time
+  // carries on from wherever the music left it. Never runs backwards.
   //
-  // Driven by setInterval over wall-clock time, NOT requestAnimationFrame —
-  // rAF is throttled to a crawl (and paused outright) whenever the tab is not
-  // the focused one, which froze the sequence on its first beat. An interval
-  // reading Date.now advances by real elapsed time whatever the browser does
-  // with its frame budget: throttling can cost smoothness, never correctness.
+  // setInterval over wall-clock time, NOT requestAnimationFrame — rAF is
+  // throttled to a crawl whenever the tab is not focused, which froze the
+  // sequence on its first beat.
   useEffect(() => {
     if (phase !== 'boot') {
       setT(0)
+      setSkipped(false)
+      finished.current = false
       return
     }
-    const start = Date.now()
+    let offset = Date.now()
+    let last = 0
     setT(0)
-    const id = setInterval(() => setT(Date.now() - start), 50)
+    const id = setInterval(() => {
+      const pos = bootPositionMs()
+      let now = Date.now() - offset
+      if (pos !== null) {
+        now = pos
+        offset = Date.now() - pos
+      }
+      last = Math.max(last, now)
+      setT(last)
+    }, 33)
     return () => clearInterval(id)
+  }, [phase])
+
+  // The hand-off. App is waiting on this rather than on a fixed timeout.
+  useEffect(() => {
+    if (phase !== 'boot' || finished.current) return
+    if (skipped || t >= cues.end) {
+      finished.current = true
+      markBootDone()
+    }
+  }, [phase, t, cues.end, skipped])
+
+  // Click or Enter skips. Not Escape: that stands JARVIS down entirely.
+  useEffect(() => {
+    if (phase !== 'boot') return
+    const skip = () => setSkipped(true)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') skip()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [phase])
 
   if (phase !== 'boot') return null
 
   const stage: Stage =
-    t >= T.reactor ? 'reactor' : t >= T.suit ? 'suit' : t >= T.rings ? 'rings' : 'bar'
+    skipped || t >= cues.reactor ? 'reactor' : t >= cues.suit ? 'suit' : t >= cues.rings ? 'rings' : 'bar'
 
-  const logShown = Math.min(LOG.length, Math.floor((t / T.rings) * (LOG.length + 1)))
-  const barPct = Math.min(1, t / (T.rings - 300))
+  // Loudness, smoothed a little so the glow breathes rather than strobes.
+  const raw = reduced ? 0 : levelAt(track, t)
+  level.current += (raw - level.current) * 0.35
+  const lvl = level.current
+
+  // The log types itself out across the quiet build before the first hit.
+  const logShown = Math.min(log.length, Math.floor((t / Math.max(1, cues.rings - 400)) * log.length) + 1)
+  const barPct = Math.min(1, t / Math.max(1, cues.rings - 300))
 
   return (
     <AnimatePresence>
@@ -73,39 +140,51 @@ export function Boot() {
         initial={{ opacity: 1 }}
         exit={{ opacity: 0, filter: 'blur(10px)' }}
         transition={{ duration: 0.8 }}
+        style={{ ['--lvl' as string]: lvl.toFixed(3) }}
+        onClick={() => setSkipped(true)}
       >
-        {/* ---- beat 1: the status bar, dimming once its work is done ---- */}
-        <div className={`boot-bar ${stage !== 'bar' ? 'boot-bar-dim' : ''}`}>
-          <div className="boot-bar-frame">
-            <span className="boot-bar-title">
-              INITIATING SYSTEM 1<span className="boot-dots">…</span>
-              <span className="boot-cursor" />
-            </span>
-            <div className="boot-seg">
-              {Array.from({ length: 22 }, (_, i) => (
-                <span
-                  key={i}
-                  className="boot-seg-cell"
-                  data-on={i / 22 < barPct ? '1' : '0'}
-                />
+        {/* A jolt on every stage change: the frame kicks, the screen flashes. */}
+        <motion.div
+          key={stage}
+          className="boot-frame"
+          initial={reduced || stage === 'bar' ? false : { scale: 1.035, x: 3, filter: 'brightness(1.8)' }}
+          animate={{ scale: 1, x: 0, filter: 'brightness(1)' }}
+          transition={{ duration: 0.45, ease: 'easeOut' }}
+        >
+          {/* ---- beat 1: the status bar, dimming once its work is done ---- */}
+          <div className={`boot-bar ${stage !== 'bar' ? 'boot-bar-dim' : ''}`}>
+            <div className="boot-bar-frame">
+              <span className="boot-bar-title" data-text="INITIATING SYSTEM 1">
+                INITIATING SYSTEM 1<span className="boot-dots">…</span>
+                <span className="boot-cursor" />
+              </span>
+              <div className="boot-seg">
+                {Array.from({ length: 22 }, (_, i) => (
+                  <span key={i} className="boot-seg-cell" data-on={i / 22 < barPct ? '1' : '0'} />
+                ))}
+              </div>
+              <span className="boot-pct">SYSTEM CHECK {Math.round(barPct * 100)}%</span>
+            </div>
+            <div className="boot-log">
+              {log.slice(0, logShown).map((l) => (
+                <div key={l} className="boot-log-line">
+                  {l}
+                </div>
               ))}
             </div>
           </div>
-          <div className="boot-log">
-            {LOG.slice(0, logShown).map((l) => (
-              <div key={l} className="boot-log-line">
-                {l}
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* ---- beats 2-4: the centre stage ---- */}
-        <div className="boot-stage">
-          {stage === 'rings' && <Rings reduced={!!reduced} />}
-          {stage === 'suit' && <Suit reduced={!!reduced} />}
-          {stage === 'reactor' && <Reactor reduced={!!reduced} t={t - T.reactor} />}
-        </div>
+          {/* ---- beats 2-4: the centre stage ---- */}
+          <div className="boot-stage">
+            {stage === 'rings' && <Rings reduced={!!reduced} />}
+            {stage === 'suit' && <Suit reduced={!!reduced} />}
+            {stage === 'reactor' && <Reactor reduced={!!reduced} t={skipped ? 1e9 : t - cues.reactor} />}
+          </div>
+        </motion.div>
+
+        {stage !== 'bar' && !reduced && <div key={`flash-${stage}`} className="boot-flash" />}
+        <div className="boot-scan" aria-hidden="true" />
+        <div className="boot-skip">CLICK OR ENTER TO SKIP</div>
       </motion.div>
     </AnimatePresence>
   )

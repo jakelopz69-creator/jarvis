@@ -1898,3 +1898,139 @@ kbd {
   transform: scaleX(-1);
   background: #000;
 }
+
+/* The mute switch. Bottom right, clear of the reactor and the legend. */
+.mic-toggle {
+  position: fixed;
+  right: 44px;
+  bottom: 70px;
+  z-index: 95;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 9px;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, rgba(2, 8, 12, 0.75));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+  transition: color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.mic-toggle:hover,
+.mic-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.mic-toggle svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.mic-toggle-off {
+  color: #ff5a5a;
+  border-color: rgba(255, 90, 90, 0.55);
+  background: rgba(40, 6, 8, 0.75);
+}
+.mic-toggle-off .mic-slash { stroke-width: 2.2 }
+.mic-muted {
+  position: fixed;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 96;
+  padding: 4px 12px;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #ff7a7a;
+  border: 1px solid rgba(255, 90, 90, 0.45);
+  background: rgba(40, 6, 8, 0.8);
+}
+@media (max-width: 600px) {
+  .mic-toggle { right: 16px; bottom: 60px }
+}
+
+/* -- boot: synced to the music (see bootCues.ts) ------------------------ */
+
+/* --lvl is the boot music's loudness right now, 0..1, set on .boot. */
+.boot { --lvl: 0; cursor: pointer; }
+.boot-frame { position: absolute; inset: 0; }
+
+.boot-stage {
+  transform: scale(calc(1 + var(--lvl) * 0.03));
+  transition: transform 80ms linear;
+}
+.boot-ring {
+  opacity: calc(0.5 + var(--lvl) * 0.5);
+  filter: drop-shadow(0 0 calc(3px + var(--lvl) * 12px) color-mix(in srgb, var(--accent) 60%, transparent));
+}
+.boot-suit { filter: brightness(calc(0.85 + var(--lvl) * 0.6)); }
+.boot-reactor { filter: brightness(calc(0.85 + var(--lvl) * 0.7)) saturate(calc(1 + var(--lvl) * 0.4)); }
+
+/* A little chromatic split on the title that widens with the music. */
+.boot-bar-title {
+  text-shadow:
+    calc(var(--lvl) * -3px) 0 0 rgba(255, 60, 90, calc(var(--lvl) * 0.55)),
+    calc(var(--lvl) * 3px) 0 0 rgba(60, 220, 255, calc(var(--lvl) * 0.55)),
+    0 0 26px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.boot-pct {
+  display: block;
+  margin-top: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  opacity: 0.7;
+}
+
+/* The impact: a bright wash that drains away in under half a second. */
+.boot-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 52%, rgba(225, 252, 255, 0.85), color-mix(in srgb, var(--accent) 35%, transparent) 38%, transparent 72%);
+  mix-blend-mode: screen;
+  animation: bootFlash 0.55s ease-out forwards;
+}
+@keyframes bootFlash {
+  from { opacity: 0.9 }
+  to   { opacity: 0 }
+}
+
+/* Scanlines and a faint flicker, so it reads as a display, not a web page. */
+.boot-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.22) 2px 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  animation: bootFlicker 3.2s steps(40) infinite;
+}
+@keyframes bootFlicker {
+  0%, 100% { opacity: 0.9 }
+  47%      { opacity: 0.82 }
+  48%      { opacity: 1 }
+  73%      { opacity: 0.86 }
+}
+
+.boot-skip {
+  position: absolute;
+  bottom: 28px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  opacity: 0.35;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-scan { animation: none; }
+  .boot-stage { transform: none; }
+}

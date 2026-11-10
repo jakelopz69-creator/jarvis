@@ -29,7 +29,8 @@ import {
   usingBridge,
   type Msg,
 } from './lib/brain'
-import { startAnalyser, micLevel } from './lib/audio'
+import { startAnalyser, micLevel, setMicEnabled } from './lib/audio'
+import { analyseBootTrack, bootDone, resetBootDone } from './lib/bootCues'
 import { probeCapabilities } from './lib/capabilities'
 import { env } from './config'
 
@@ -222,6 +223,8 @@ export default function App() {
 
   /** What the voice loop should do with what it hears, derived from phase. */
   const mode = (): VoiceMode => {
+    // Muted means deaf, whatever else is going on.
+    if (store.getState().micMuted) return 'deaf'
     switch (store.getState().phase) {
       case 'offline':
       case 'boot':
@@ -359,6 +362,8 @@ export default function App() {
     music.playBoot()
     music.startAmbient()
 
+    resetBootDone()
+    void analyseBootTrack()
     s.setPhase('boot')
 
     watchServers((servers) => store.getState().setConnected(servers))
@@ -487,11 +492,10 @@ export default function App() {
       }, 200)
     }
 
-    // Long enough for the four-beat start-up sequence in Boot.tsx to play —
-    // status bar, rings, suit schematic, reactor power-up — before the live
-    // interface takes over. Kept a touch under the boot cue so the music is
-    // still rising as the reactor lands.
-    await new Promise((r) => setTimeout(r, 9200)) // boot sequence
+    // The start-up sequence in Boot.tsx decides when it is finished: it is
+    // timed to the hits in the boot music (bootCues.ts) and can be skipped.
+    // The ceiling only guards against a sequence that never reports in.
+    await Promise.race([bootDone(), new Promise((r) => setTimeout(r, 30000))])
     await warming
     store.getState().setConnected(connectedLabels())
 
@@ -517,7 +521,15 @@ export default function App() {
     store.getState().setVoice(currentVoiceName())
 
     // One voice loop, started once, running until the page closes.
-    voice.current = await startVoice({
+    // Muted before the boot finished: leave the loop off until unmuted.
+    if (!store.getState().micMuted) voice.current = await startListening()
+
+    store.getState().setPhase('dormant')
+  }
+
+  /** One voice loop with the app's handlers. Used at boot and on unmute. */
+  const startListening = () =>
+    startVoice({
       mode,
       onWake,
       onSpeechStart,
@@ -526,7 +538,23 @@ export default function App() {
       onError: onVoiceError,
     })
 
-    store.getState().setPhase('dormant')
+  /**
+   * The mute switch, wherever it was pressed (the HUD button or M). Muting
+   * silences the shared stream and stops the voice loop outright — the
+   * browser's recogniser keeps its own capture, so 'deaf' mode alone would
+   * still be sending audio somewhere. Unmuting starts a fresh loop.
+   */
+  const applyMute = async (muted: boolean) => {
+    setMicEnabled(!muted)
+    const phase = store.getState().phase
+    if (muted) {
+      voice.current?.stop()
+      voice.current = null
+      if (phase === 'listening' || phase === 'waking') goDormant()
+      return
+    }
+    if (phase === 'offline' || phase === 'boot' || voice.current) return
+    voice.current = await startListening()
   }
 
   // -- clap to start --------------------------------------------------------
@@ -661,10 +689,23 @@ export default function App() {
         return
       }
 
+      // M mutes and unmutes the microphone, same as the button on screen.
+      if (e.key === 'm' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        const s = store.getState()
+        s.setMicMuted(!s.micMuted)
+        return
+      }
+
       // Space starts a turn without the wake word. Worth using while filming so
       // a missed wake word doesn't cost a take.
       if (e.code !== 'Space' || e.repeat) return
       e.preventDefault()
+
+      if (store.getState().micMuted && store.getState().phase !== 'offline') {
+        store.getState().setError('Microphone muted. Press M or click the mic to unmute.')
+        return
+      }
 
       const phase = store.getState().phase
       if (phase === 'offline') {
@@ -684,7 +725,13 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
 
+    // React to the mute switch however it was flipped.
+    const unsubMute = store.subscribe((s, prev) => {
+      if (s.micMuted !== prev.micMuted) void applyMute(s.micMuted)
+    })
+
     return () => {
+      unsubMute()
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKey)
       clearIdle()

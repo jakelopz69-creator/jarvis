@@ -158,6 +158,8 @@ export function Hud() {
   const bootNote = useStore((s) => s.bootNote)
   const gestures = useStore((s) => s.gestures)
   const looking = useStore((s) => s.looking)
+  const micMuted = useStore((s) => s.micMuted)
+  const setMicMuted = useStore((s) => s.setMicMuted)
   const ui = useStore((s) => s.ui)
 
   // accentFor folds JARVIS's overrides in over the phase colour, so one
@@ -312,7 +314,7 @@ export function Hud() {
 
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
+          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>M</kbd> mute · <kbd>G</kbd> hands
           {voice && (
             <>
               {' · '}
@@ -336,6 +338,25 @@ export function Hud() {
         </div>
       )}
       <GestureGuide live={gestures} />
+
+      {phase !== 'offline' && (
+        <button
+          type="button"
+          className={`mic-toggle${micMuted ? ' mic-toggle-off' : ''}`}
+          onClick={() => setMicMuted(!micMuted)}
+          aria-pressed={micMuted}
+          aria-label={micMuted ? 'Unmute microphone' : 'Mute microphone'}
+          title={micMuted ? 'Unmute microphone (M)' : 'Mute microphone (M)'}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+            {micMuted && <path className="mic-slash" d="M4 4l16 16" />}
+          </svg>
+          <span>{micMuted ? 'MIC OFF' : 'MIC ON'}</span>
+        </button>
+      )}
+      {micMuted && phase !== 'offline' && <div className="mic-muted">MIC MUTED · M TO UNMUTE</div>}
     </div>
   )
 }

@@ -182,7 +182,7 @@ export function runCheckIn(opts = {}) {
 
 async function doCheckIn({
   file = MEMORY_FILE,
-  model = process.env.JARVIS_CHECKIN_MODEL ?? process.env.JARVIS_MODEL ?? 'claude-opus-5',
+  model = process.env.JARVIS_CHECKIN_MODEL ?? process.env.JARVIS_MODEL ?? 'claude-opus-5-5',
   effort = process.env.JARVIS_CHECKIN_EFFORT ?? 'medium',
   cwd = resolvePath(process.env.JARVIS_WORKSPACE ?? join(homedir(), '.jarvis', 'workspace')),
   queryImpl = query,

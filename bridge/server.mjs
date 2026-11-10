@@ -179,7 +179,7 @@ const DISABLED = new Set(
  * The orchestrator model. Override with JARVIS_MODEL to trade quality for pace
  * — claude-sonnet-5 is noticeably snappier on camera if Opus feels slow.
  */
-const MODEL = process.env.JARVIS_MODEL ?? 'claude-opus-5'
+const MODEL = process.env.JARVIS_MODEL ?? 'claude-opus-5-5'
 
 /**
  * How hard the model thinks before answering.

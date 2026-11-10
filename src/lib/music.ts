@@ -160,6 +160,18 @@ function set(cue: Cue, to: number, ms: number) {
   fadeTo(cue, level(cue), ms)
 }
 
+/**
+ * Where the boot music is, in milliseconds, or null when it is not playing
+ * (missing file, blocked audio, not started). The boot sequence follows this
+ * rather than its own clock, so a track that starts late or stalls to buffer
+ * drags the visuals with it instead of drifting out of sync.
+ */
+export function bootPositionMs(): number | null {
+  const t = tracks.get('boot-music')
+  if (!t || t.el.paused || t.el.ended || t.el.readyState < 2) return null
+  return t.el.currentTime * 1000
+}
+
 /** The boot cue's own dissolve, held so stopAll can cancel it. */
 let dissolve: ReturnType<typeof setTimeout> | null = null
 

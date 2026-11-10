@@ -21,6 +21,19 @@ export async function getMic(): Promise<MediaStream> {
   return stream
 }
 
+/**
+ * Mute or unmute the shared microphone stream. A disabled track delivers
+ * silence to everything reading it — the level meter, voice detection, the
+ * clap listener — without giving up the device, so unmuting is instant and
+ * asks for no permission again. The browser's own speech recogniser opens its
+ * own capture, so App also stops the voice loop while muted.
+ */
+export function setMicEnabled(on: boolean): void {
+  stream?.getAudioTracks().forEach((t) => {
+    t.enabled = on
+  })
+}
+
 export async function startAnalyser(): Promise<void> {
   if (analyser) return
   const s = await getMic()
