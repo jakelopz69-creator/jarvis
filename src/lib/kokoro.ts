@@ -100,7 +100,7 @@ export async function load(): Promise<Kokoro | null> {
       // binary (see ortAssets in vite.config.ts). Left to transformers.js it
       // fetches them from a CDN, which the page's CSP refuses to run.
       const { env } = await import('@huggingface/transformers')
-      const onnx = env.backends.onnx as { wasm?: { wasmPaths?: unknown } }
+      const onnx = env.backends.onnx as { wasm?: { wasmPaths?: unknown; proxy?: boolean } }
       if (onnx.wasm) onnx.wasm.wasmPaths = `${import.meta.env.BASE_URL}ort/`
       const { KokoroTTS } = await import('kokoro-js')
       const open = (target: 'webgpu' | 'wasm') =>
@@ -132,6 +132,11 @@ export async function load(): Promise<Kokoro | null> {
       }
       if (!tts) {
         if (DEVICE_PREF === 'gpu') throw new Error('WebGPU is not available in this browser')
+        // On the CPU the model runs in a worker. Run on the page itself it
+        // blocks the main thread for the whole sentence — measured at twenty
+        // seconds with no timer, click or microphone event getting through,
+        // which is a frozen assistant. (WebGPU cannot use the proxy.)
+        if (onnx.wasm) onnx.wasm.proxy = true
         tts = await open('wasm')
         device = 'wasm'
       }
@@ -169,17 +174,62 @@ export function isBadAudio(samples: ArrayLike<number> | undefined): boolean {
   return peak < 1e-3
 }
 
-/** Synthesise one sentence. Returns null if the model isn't usable. */
+/**
+ * How long one sentence may take to generate before it is spoken by the
+ * system voice instead. On a CPU without threads (the browser only allows
+ * them on cross-origin-isolated pages) Kokoro can take three seconds for
+ * "Yes, sir?" and eighteen for a long sentence — measured — and an assistant
+ * that sits silent that long reads as frozen.
+ */
+export const budgetMs = (text: string) => 4000 + 45 * text.length
+
+/** Sentences in a row that blew the budget before the voice is retired. */
+const MAX_SLOW = 2
+let slow = 0
+/** Set when Kokoro was retired for being too slow on this machine. */
+export let tooSlow = false
+
+const TIMEOUT = Symbol('timeout')
+
+/**
+ * Synthesise one sentence. Returns null — and the caller speaks it with the
+ * system voice — whenever Kokoro cannot deliver promptly: still downloading,
+ * failed, or slower than budgetMs on this machine.
+ */
 export async function speak(text: string): Promise<string | null> {
-  const tts = await load()
-  if (!tts) return null
+  if (failed) return null
+  // Never wait on a download: the first-time model is 86-330MB, and waiting
+  // on it is minutes of silence. Speak with the system voice until it is in.
+  if (!model) {
+    void load()
+    return null
+  }
+  const tts = model
   try {
-    const audio = await tts.generate(text, {
+    const generating = tts.generate(text, {
       voice,
       // Slightly under natural pace — the character is never hurried, and the
       // steadiness is most of the characterisation.
       speed: 0.95,
     })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const audio = await Promise.race([
+      generating,
+      new Promise<typeof TIMEOUT>((r) => (timer = setTimeout(() => r(TIMEOUT), budgetMs(text)))),
+    ]).finally(() => clearTimeout(timer))
+    if (audio === TIMEOUT) {
+      // The run cannot be cancelled; let it finish unobserved.
+      generating.catch(() => {})
+      slow++
+      lastError = `slower than ${Math.round(budgetMs(text) / 1000)}s for one sentence`
+      if (slow >= MAX_SLOW) {
+        tooSlow = true
+        failed = true
+        console.warn('[jarvis] kokoro is too slow on this machine — the system voice from here on.')
+      }
+      return null
+    }
+    slow = 0
     const samples = (audio as unknown as { audio?: Float32Array }).audio
     if (device === 'webgpu' && DEVICE_PREF !== 'gpu' && isBadAudio(samples)) {
       // The GPU path loaded but speaks silence. Move to the CPU for good and
@@ -188,7 +238,8 @@ export async function speak(text: string): Promise<string | null> {
       gpuBroken = true
       model = null
       device = ''
-      return speak(text)
+      void load()
+      return null
     }
     failures = 0
     return URL.createObjectURL(audio.toBlob())

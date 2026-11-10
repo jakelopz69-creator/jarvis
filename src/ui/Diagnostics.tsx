@@ -134,7 +134,9 @@ export function Diagnostics() {
           k="kokoro"
           v={
             kokoro.isUnavailable()
-              ? `failed: ${kokoro.lastError || 'unknown'}`
+              ? kokoro.tooSlow
+                ? 'too slow on this PC — system voice'
+                : `failed: ${kokoro.lastError || 'unknown'}`
               : kokoro.isReady()
                 ? `ready on ${kokoro.device === 'wasm' ? 'CPU' : 'GPU'}`
                 : `loading ${Math.round(kokoro.loadProgress() * 100)}%`
