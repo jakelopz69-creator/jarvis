@@ -23,6 +23,7 @@ import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
 import { PROMPT_MEMORY, loadMemory, memoryPrompt, memoryServer } from './memory.mjs'
 import { describeSchedule, runCheckIn, startScheduler } from './checkin.mjs'
+import { describeInbox, startInbox } from './inbox.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -1108,6 +1109,9 @@ if (DISABLED.size) console.log(`[jarvis] disabled: ${[...DISABLED].join(', ')}`)
 if (!DISABLED.has('memory')) {
   console.log(describeSchedule())
   startScheduler({ run: (opts) => runCheckIn({ ...opts, model: MODEL }) })
+  // Email JARVIS while away: answers your own mail that carries your code word.
+  console.log(describeInbox())
+  startInbox({ model: MODEL })
 }
 if (!DISABLED.has('browser')) void chromeAvailable().then((ok) => {
   console.log(

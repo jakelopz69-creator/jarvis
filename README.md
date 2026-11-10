@@ -233,6 +233,32 @@ npm run checkin       # run one check-in now, outside the schedule
 Check-ins use your Claude plan like any conversation does, and they only run
 while `npm start` is running and the computer is awake.
 
+### Email JARVIS while you are away
+
+With email set up for check-ins, add a code word and JARVIS answers your email:
+
+```bash
+setx JARVIS_EMAIL_CODE "pick-a-word-nobody-would-guess"
+```
+
+Then, from your phone, email yourself with the code word in the subject, e.g.
+`Jarvis pick-a-word-nobody-would-guess: what time does the hardware store close?`
+Within a minute or two JARVIS replies to the same address. Reply to his email to
+keep going; replies to his messages do not need the code word again.
+
+He answers only mail **from your own address** (`JARVIS_EMAIL_TO`, or the list
+in `JARVIS_INBOX_ALLOW`) that carries the code word or replies to one of his
+emails, and only mail that arrived after the feature was switched on. By email
+he can search and read the web and use his memory (so "keep me posted on the
+Lakers" works), and nothing else: no files, no shell, no browser, no other
+servers. He never sends email anywhere but back to you. The code word is
+removed before he sees the message, and never appears in a reply.
+
+The inbox is read over IMAP with the same Gmail app password as the check-in
+emails (`imap.gmail.com`; `JARVIS_IMAP_HOST` / `JARVIS_IMAP_PORT` to change it).
+It is checked every minute (`JARVIS_INBOX_POLL_SECONDS`), only while the bridge
+runs. `JARVIS_INBOX=0` turns it off.
+
 ---
 
 ## Controls
