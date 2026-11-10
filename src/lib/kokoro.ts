@@ -72,6 +72,23 @@ const voice = resolveVoice()
 const MAX_FAILURES = 3
 let failures = 0
 
+/**
+ * Which device to try. `auto` prefers the GPU and falls back to the CPU;
+ * VITE_KOKORO_DEVICE=cpu skips the GPU entirely for a machine whose WebGPU
+ * loads but misbehaves, and =gpu refuses the fallback (for testing).
+ */
+const DEVICE_PREF = String(import.meta.env.VITE_KOKORO_DEVICE ?? 'auto').toLowerCase()
+
+/**
+ * Precision per device. q8 is about 86MB and right for the CPU, but on WebGPU
+ * it generates broken audio — silence or noise — and kokoro-js says to use
+ * fp32 there. That costs a one-time 330MB download, cached afterwards.
+ */
+const DTYPE = { webgpu: 'fp32', wasm: 'q8' } as const
+
+/** Set once the GPU has produced bad audio, so every later load goes to the CPU. */
+let gpuBroken = false
+
 export async function load(): Promise<Kokoro | null> {
   if (model) return model
   if (failed) return null
@@ -86,12 +103,10 @@ export async function load(): Promise<Kokoro | null> {
       const onnx = env.backends.onnx as { wasm?: { wasmPaths?: unknown } }
       if (onnx.wasm) onnx.wasm.wasmPaths = `${import.meta.env.BASE_URL}ort/`
       const { KokoroTTS } = await import('kokoro-js')
-      const open = (device: 'webgpu' | 'wasm') =>
+      const open = (target: 'webgpu' | 'wasm') =>
         KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
-          // q8 is about 86MB against fp32's 330MB, and the difference is
-          // inaudible through laptop speakers.
-          dtype: 'q8',
-          device,
+          dtype: DTYPE[target],
+          device: target,
           // The callback is a union across several event shapes; only the
           // download-progress one carries a percentage.
           progress_callback: (p: unknown) => {
@@ -100,26 +115,27 @@ export async function load(): Promise<Kokoro | null> {
           },
         })
       // WebGPU keeps generation well ahead of playback, but plenty of
-      // machines and drivers do not expose it to Chrome. Rather than drop
-      // straight to the system voice there, run the same model on the CPU
-      // through WebAssembly: slower to start each sentence, still the same
-      // voice. The model files are cached, so the second attempt does not
-      // download them again.
+      // machines and drivers do not expose it to Chrome, or expose one that
+      // misbehaves. The CPU runs the same voice through WebAssembly: slower to
+      // start each sentence, still the same voice.
       const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
+      const tryGpu = hasGpu && !gpuBroken && DEVICE_PREF !== 'cpu'
       let tts
-      if (hasGpu) {
+      if (tryGpu) {
         try {
           tts = await open('webgpu')
           device = 'webgpu'
         } catch (err) {
+          if (DEVICE_PREF === 'gpu') throw err
           console.warn('[jarvis] kokoro on WebGPU failed, trying the CPU instead:', err)
         }
       }
       if (!tts) {
+        if (DEVICE_PREF === 'gpu') throw new Error('WebGPU is not available in this browser')
         tts = await open('wasm')
         device = 'wasm'
       }
-      console.info(`[jarvis] kokoro voice ready on ${device}`)
+      console.info(`[jarvis] kokoro voice ready on ${device} (${device ? DTYPE[device] : ''})`)
       progress = 1
       model = tts as unknown as Kokoro
       return model
@@ -136,6 +152,23 @@ export async function load(): Promise<Kokoro | null> {
   return loading
 }
 
+/**
+ * True when generated samples are unusable: any NaN or infinity, or nothing
+ * louder than a whisper. A misbehaving GPU returns exactly this, and playing
+ * it is indistinguishable from the voice being off.
+ */
+export function isBadAudio(samples: ArrayLike<number> | undefined): boolean {
+  if (!samples || samples.length === 0) return true
+  let peak = 0
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i]
+    if (!Number.isFinite(v)) return true
+    const a = Math.abs(v)
+    if (a > peak) peak = a
+  }
+  return peak < 1e-3
+}
+
 /** Synthesise one sentence. Returns null if the model isn't usable. */
 export async function speak(text: string): Promise<string | null> {
   const tts = await load()
@@ -147,6 +180,16 @@ export async function speak(text: string): Promise<string | null> {
       // steadiness is most of the characterisation.
       speed: 0.95,
     })
+    const samples = (audio as unknown as { audio?: Float32Array }).audio
+    if (device === 'webgpu' && DEVICE_PREF !== 'gpu' && isBadAudio(samples)) {
+      // The GPU path loaded but speaks silence. Move to the CPU for good and
+      // say this sentence again there, rather than leave him mute.
+      console.warn('[jarvis] kokoro produced silent audio on WebGPU — switching to the CPU')
+      gpuBroken = true
+      model = null
+      device = ''
+      return speak(text)
+    }
     failures = 0
     return URL.createObjectURL(audio.toBlob())
   } catch (err) {
