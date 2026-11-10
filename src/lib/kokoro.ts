@@ -37,6 +37,9 @@ export const isUnavailable = () => failed
 /** Exposed for diagnosis — the console warning alone is easy to miss. */
 export let lastError = ''
 
+/** Where the model ended up running: 'webgpu', 'wasm', or '' before it loads. */
+export let device: '' | 'webgpu' | 'wasm' = ''
+
 /**
  * British male voices, in the order they suit the character. George is the
  * closest to a measured RP baritone; Fable is warmer, Lewis lower, Daniel
@@ -77,22 +80,40 @@ export async function load(): Promise<Kokoro | null> {
   loading = (async () => {
     try {
       const { KokoroTTS } = await import('kokoro-js')
-      const tts = await KokoroTTS.from_pretrained(
-        'onnx-community/Kokoro-82M-v1.0-ONNX',
-        {
+      const open = (device: 'webgpu' | 'wasm') =>
+        KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
           // q8 is about 86MB against fp32's 330MB, and the difference is
-          // inaudible through laptop speakers. WebGPU keeps generation ahead
-          // of playback; without it this would be too slow to converse with.
+          // inaudible through laptop speakers.
           dtype: 'q8',
-          device: 'webgpu',
+          device,
           // The callback is a union across several event shapes; only the
           // download-progress one carries a percentage.
           progress_callback: (p: unknown) => {
             const pct = (p as { progress?: number })?.progress
             if (typeof pct === 'number') progress = pct / 100
           },
-        },
-      )
+        })
+      // WebGPU keeps generation well ahead of playback, but plenty of
+      // machines and drivers do not expose it to Chrome. Rather than drop
+      // straight to the system voice there, run the same model on the CPU
+      // through WebAssembly: slower to start each sentence, still the same
+      // voice. The model files are cached, so the second attempt does not
+      // download them again.
+      const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
+      let tts
+      if (hasGpu) {
+        try {
+          tts = await open('webgpu')
+          device = 'webgpu'
+        } catch (err) {
+          console.warn('[jarvis] kokoro on WebGPU failed, trying the CPU instead:', err)
+        }
+      }
+      if (!tts) {
+        tts = await open('wasm')
+        device = 'wasm'
+      }
+      console.info(`[jarvis] kokoro voice ready on ${device}`)
       progress = 1
       model = tts as unknown as Kokoro
       return model
