@@ -21,6 +21,8 @@ import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
+import { PROMPT_MEMORY, loadMemory, memoryPrompt, memoryServer } from './memory.mjs'
+import { describeSchedule, runCheckIn, startScheduler } from './checkin.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -487,6 +489,7 @@ const SYSTEM_PROMPT = [
   DISABLED.has('interface') ? '' : PROMPT_INTERFACE,
   DISABLED.has('browser') ? '' : PROMPT_BROWSER,
   DISABLED.has('camera') ? '' : PROMPT_EYES,
+  DISABLED.has('memory') ? '' : PROMPT_MEMORY,
   PROMPT_TOOLS,
 ].join('')
 
@@ -1100,6 +1103,12 @@ console.log(
 // at the tool boundary from one that is broken, and this is the one place the
 // difference can be stated before anybody asks a question that depends on it.
 if (DISABLED.size) console.log(`[jarvis] disabled: ${[...DISABLED].join(', ')}`)
+// The scheduled check-in on followed topics. It only runs while the bridge
+// does, so a machine that sleeps through the slot skips it (see checkin.mjs).
+if (!DISABLED.has('memory')) {
+  console.log(describeSchedule())
+  startScheduler({ run: (opts) => runCheckIn({ ...opts, model: MODEL }) })
+}
 if (!DISABLED.has('browser')) void chromeAvailable().then((ok) => {
   console.log(
     ok
@@ -1278,6 +1287,8 @@ wss.on('connection', (socket) => {
     // interface is the interface talking about itself, not work being done for
     // the user, and the badge would be describing the very thing they can see.
     if (name.startsWith('mcp__jarvis_ui__')) return
+    // Saving a note is housekeeping, not work the user is waiting on.
+    if (name.startsWith('mcp__jarvis_memory__') && !name.endsWith('check_topics_now')) return
     if (decideTool(name)) return sendTurn({ type: 'tool', name })
     if (id) heldTools.set(id, name)
   }
@@ -1318,12 +1329,21 @@ wss.on('connection', (socket) => {
           : { jarvis_chrome: chromeServer({ allowWrites: ALLOW_WRITES }) }),
         // The camera, which unlike everything else here has to ask and wait.
         ...(DISABLED.has('camera') ? {} : { jarvis_eyes: visionServer(ask) }),
+        // Long-term memory and followed topics, in one JSON file. Read fresh
+        // for every connection so a new session knows what the last one saved.
+        ...(DISABLED.has('memory')
+          ? {}
+          : {
+              jarvis_memory: memoryServer({
+                checkNow: async () => (await runCheckIn({ model: MODEL })).summary,
+              }),
+            }),
       },
       // A plain system prompt, not the claude_code preset. The preset is
       // tuned for a coding agent — verbose, file-oriented, and a large chunk
       // of input tokens on every turn. Replacing it makes the persona stick,
       // keeps answers short enough to speak, and cuts cost per turn.
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: DISABLED.has('memory') ? SYSTEM_PROMPT : SYSTEM_PROMPT + memoryPrompt(loadMemory()),
       // Run from JARVIS's own workspace rather than the home directory. MCP
       // discovery does not depend on it — settingSources is empty and the
       // servers are passed in explicitly above — and file tools resolve

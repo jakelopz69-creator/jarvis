@@ -17,7 +17,9 @@
     "preview": "vite preview",
     "bridge": "node bridge/server.mjs",
     "bridge:writes": "node bridge/server.mjs --writes",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "checkin": "node bridge/checkin.mjs",
+    "notify:test": "node bridge/checkin.mjs --test-notify"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
@@ -31,6 +33,7 @@
     "dompurify": "^3.4.12",
     "framer-motion": "^12.43.0",
     "kokoro-js": "^1.2.1",
+    "nodemailer": "^7.0.13",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.185.1",

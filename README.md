@@ -193,6 +193,44 @@ the bridge (`/img` and `/media`, both SSRF-guarded), so hotlink-blocked news
 thumbnails still appear and the page never beacons your IP to a host the model
 chose.
 
+### Memory and check-ins
+
+JARVIS keeps a small long-term memory in `~/.jarvis/memory.json`. Tell him
+something worth keeping ("remember I'm planning a trip to Japan in March") and
+he saves it, and every new conversation starts with those notes. Ask him to
+keep you posted ("keep me updated on the Lakers") and the topic goes on a watch
+list.
+
+While the bridge is running, a **check-in** researches every followed topic on a
+schedule (08:00 by default), using web search only, and messages you when there
+is real news. If the computer was asleep at that time, a check-in up to three
+hours late still runs; after that, it is skipped until the next day. Say
+"check my topics now" to run one on demand.
+
+Messages go only to the destinations you set below, never anywhere the model
+chooses. Set these with `setx NAME "value"` on Windows (then open a new
+terminal), or `export` on macOS and Linux.
+
+| Channel | Variables | Notes |
+|---|---|---|
+| Phone push (free) | `JARVIS_NTFY_TOPIC` | Install the **ntfy** app, subscribe to a long random topic name, and set the same name here. Anyone who knows the name can read it, so make it unguessable. |
+| Email | `JARVIS_EMAIL_TO`, `JARVIS_SMTP_USER`, `JARVIS_SMTP_PASS` | For Gmail, `JARVIS_SMTP_PASS` is an **app password** (Google Account → Security → App passwords), not your normal password. `JARVIS_SMTP_HOST` / `JARVIS_SMTP_PORT` default to Gmail. |
+| Text message | `JARVIS_TWILIO_SID`, `JARVIS_TWILIO_TOKEN`, `JARVIS_TWILIO_FROM`, `JARVIS_SMS_TO` | Needs a Twilio account and number. Paid per message. |
+| Phone call | the Twilio three, plus `JARVIS_CALL_TO` | Only for updates the check-in marks important. |
+
+Other settings: `JARVIS_CHECKIN_TIMES` (comma-separated, 24-hour local time,
+for example `08:00,18:00`; empty turns the schedule off), `JARVIS_CHECKIN_MODEL`
+and `JARVIS_CHECKIN_EFFORT` (default `medium`). `JARVIS_DISABLE=memory` turns
+the whole feature off.
+
+```bash
+npm run notify:test   # send a test message on every configured channel
+npm run checkin       # run one check-in now, outside the schedule
+```
+
+Check-ins use your Claude plan like any conversation does, and they only run
+while `npm start` is running and the computer is awake.
+
 ---
 
 ## Controls

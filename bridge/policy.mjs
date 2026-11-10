@@ -153,6 +153,11 @@ export function decideTool(name, allowWrites = false) {
     // indicator the user can see for as long as it is live.
     if (server === 'jarvis_eyes') return true
 
+    // Long-term memory. It writes, but only to its own small JSON file
+    // outside the workspace, through tools that cap what can be stored —
+    // nothing a file or shell gate would be protecting.
+    if (server === 'jarvis_memory') return true
+
     const tool = mcpToolOf(name)
     if (EFFECTFUL_VERB.test(tool) && !VETO_EXEMPT.has(`${server}__${tool}`)) {
       return allowWrites
