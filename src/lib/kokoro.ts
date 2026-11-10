@@ -79,6 +79,12 @@ export async function load(): Promise<Kokoro | null> {
 
   loading = (async () => {
     try {
+      // Point the ONNX runtime at this origin's copy of its loader and WASM
+      // binary (see ortAssets in vite.config.ts). Left to transformers.js it
+      // fetches them from a CDN, which the page's CSP refuses to run.
+      const { env } = await import('@huggingface/transformers')
+      const onnx = env.backends.onnx as { wasm?: { wasmPaths?: unknown } }
+      if (onnx.wasm) onnx.wasm.wasmPaths = `${import.meta.env.BASE_URL}ort/`
       const { KokoroTTS } = await import('kokoro-js')
       const open = (device: 'webgpu' | 'wasm') =>
         KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
